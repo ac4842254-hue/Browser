@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.net.Uri
 import android.text.TextUtils
 import org.json.JSONArray
+import org.json.JSONObject
 import org.json.JSONTokener
 import android.app.Activity
 import android.os.Bundle
@@ -115,26 +116,142 @@ private val FP_JS = """
 })();
 """
 
-private val HOME = """
-<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-:root{color-scheme:light dark}
-body{font-family:system-ui,sans-serif;margin:0;padding:28px 18px;text-align:center}
-h1{font-size:30px;margin:34px 0 6px}p{opacity:.7;margin:0 0 24px}
-input{width:100%;padding:14px;font-size:17px;border-radius:12px;border:1px solid #8886;box-sizing:border-box}
-button{margin:14px 5px 0;padding:12px 22px;font-size:16px;border:0;border-radius:12px;background:#5b3df5;color:#fff}
-</style></head><body>
-<h1>PrivBrowser</h1><p>Private &middot; Tracker-free &middot; AI search</p>
-<form action="https://home.local/s" method="get">
-<input name="q" placeholder="Search ya sawal likho" autocomplete="off">
-<button type="submit" name="m" value="s">Search</button>
-<button type="submit" name="m" value="ai">Ask AI</button>
-</form></body></html>
+private val BASE_CSS = """
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,sans-serif;background:#0b1020;color:#e8ecf7;line-height:1.5}
+a{color:#5aa2ff;text-decoration:none}
+.sb{display:flex;align-items:center;gap:6px;background:#0f1a36;border:2px solid #2b7bff;border-radius:30px;padding:4px 5px 4px 16px;box-shadow:0 0 18px #2b7bff66}
+.sb input{flex:1;min-width:0;background:none;border:0;outline:0;color:#fff;font-size:17px;padding:11px 2px}
+.sb input::placeholder{color:#9aa7c7}
+.sb button{border:0;border-radius:22px;background:#2b7bff;color:#fff;padding:10px 14px;font-size:15px}
+.sb button.g{background:#2a3558}
+.mini{width:100%;padding:11px 14px;border-radius:14px;border:1px solid #ffffff44;background:#0f1a36cc;color:#fff;font-size:15px;outline:0}
 """
+
+private val WX_JS = """
+var g=function(i){return document.getElementById(i)};
+var esc=function(s){return String(s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]})};
+var IC=function(c){return c===0?"☀️":c<=2?"⛅":c===3?"☁️":c<=48?"🌫️":c<=67?"🌧️":c<=77?"❄️":c<=82?"🌦️":"⛈️"};
+async function getWx(){
+  var city=localStorage.getItem("city")||"Patna";
+  var c=null;try{c=JSON.parse(localStorage.getItem("wxc")||"null")}catch(e){}
+  if(c&&c.city===city&&Date.now()-c.t<1800000)return c;
+  var gj=await (await fetch("https://geocoding-api.open-meteo.com/v1/search?count=1&name="+encodeURIComponent(city))).json();
+  var p=gj.results&&gj.results[0];if(!p)return null;
+  var w=await (await fetch("https://api.open-meteo.com/v1/forecast?latitude="+p.latitude+"&longitude="+p.longitude+"&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=5")).json();
+  c={city:city,place:p.name+(p.admin1?", "+p.admin1:""),t:Date.now(),w:w};
+  localStorage.setItem("wxc",JSON.stringify(c));return c;
+}
+"""
+
+private val HOME = """
+<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>__CSS__
+body{min-height:100vh;background:linear-gradient(#070c24 0%,#241657 40%,#8a3f78 68%,#e8825f 100%) fixed}
+.stars{position:absolute;left:0;right:0;top:0;height:60vh;pointer-events:none;background-image:radial-gradient(1.5px 1.5px at 12% 18%,#fff,transparent),radial-gradient(1px 1px at 33% 8%,#fff,transparent),radial-gradient(1.5px 1.5px at 58% 22%,#fff,transparent),radial-gradient(1px 1px at 81% 12%,#fff,transparent),radial-gradient(1px 1px at 90% 30%,#fff,transparent),radial-gradient(1px 1px at 45% 35%,#fff,transparent),radial-gradient(1px 1px at 22% 40%,#fff,transparent)}
+.mt{position:fixed;left:0;right:0;bottom:0;width:100%;height:34vh;pointer-events:none}
+.wrap{position:relative;padding:16px 16px 60px;text-align:center}
+.wx{text-align:right;font-size:13px;min-height:64px;cursor:pointer;line-height:1.35}
+.wx .t{font-size:21px}
+.logo{width:76px;height:76px}
+h1{font-size:34px;margin:6px 0 2px;font-weight:700}
+.tag{opacity:.9;margin-bottom:22px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px 6px;margin-top:34px}
+.ic{display:block;color:#fff;font-size:12px}
+.ic i{display:flex;width:54px;height:54px;margin:0 auto 6px;border-radius:15px;align-items:center;justify-content:center;font-style:normal;font-weight:700;font-size:24px;color:#fff;box-shadow:0 4px 12px #0007}
+</style></head><body>
+<div class="stars"></div>
+<svg class="mt" viewBox="0 0 400 140" preserveAspectRatio="none"><polygon points="0,140 0,90 50,50 90,85 140,30 200,95 250,45 310,90 360,55 400,85 400,140" fill="#150f33" opacity=".92"/><polygon points="0,140 0,112 70,82 130,116 200,78 270,118 340,88 400,112 400,140" fill="#0a0818"/></svg>
+<div class="wrap">
+<div class="wx" id="wx"></div>
+<svg class="logo" viewBox="0 0 100 100"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4fc3ff"/><stop offset="1" stop-color="#1b4fff"/></linearGradient></defs><circle cx="50" cy="50" r="44" fill="url(#lg)"/><path d="M28 55c10-22 38-26 46-6-12-8-30-4-38 12 8 10 24 10 34-2-2 20-34 30-42-4z" fill="#fff" opacity=".92"/></svg>
+<h1>SkyBrowser</h1>
+<div class="tag">तेज &bull; सुरक्षित &bull; आपका</div>
+<form class="sb" action="https://home.local/s" method="get">
+<input name="q" placeholder="कुछ भी खोजें..." autocomplete="off">
+<button name="m" value="s">खोजें</button><button name="m" value="ai" class="g">AI</button></form>
+<div class="grid" id="grid"></div>
+<div id="add" style="margin-top:16px"></div>
+</div>
+<script>
+__WXJS__
+var SC=[["YouTube","https://www.youtube.com","#ff0000","▶"],["Google","https://www.google.com","#ffffff","G","#4285f4"],["WhatsApp","https://web.whatsapp.com","#25d366","✆"],["Instagram","https://www.instagram.com","linear-gradient(45deg,#feda75,#d62976,#4f5bd5)","◎"],["Facebook","https://www.facebook.com","#1877f2","f"],["X","https://x.com","#000000","X"],["Amazon","https://www.amazon.in","#ffffff","a","#111111"],["Flipkart","https://www.flipkart.com","#2874f0","F"]];
+function draw(){
+  var all=SC.slice();
+  try{JSON.parse(localStorage.getItem("sc")||"[]").forEach(function(x){all.push([x.n,x.u,"#2b3a6b",x.n.charAt(0).toUpperCase()])})}catch(e){}
+  g("grid").innerHTML=all.map(function(s){return '<a class="ic" href="'+esc(s[1])+'"><i style="background:'+s[2]+';'+(s[4]?"color:"+s[4]:"")+'">'+esc(s[3])+'</i>'+esc(s[0])+'</a>'}).join("")+'<a class="ic" href="#" onclick="addSc();return false"><i style="background:#ffffff2a">+</i>Add</a>';
+}
+function addSc(){
+  var b=g("add");b.innerHTML='<input id="au" class="mini" placeholder="site.com likho, Enter dabao" autocomplete="off">';
+  var i=g("au");i.focus();
+  i.onkeydown=function(e){if(e.key!=="Enter")return;e.preventDefault();var v=i.value.trim();if(!v)return;
+    if(!/^https?:/i.test(v))v="https://"+v;var h;try{h=new URL(v).hostname.replace(/^www\./,"")}catch(x){return}
+    var a=JSON.parse(localStorage.getItem("sc")||"[]");a.push({n:h.split(".")[0],u:v});localStorage.setItem("sc",JSON.stringify(a));b.innerHTML="";draw()};
+}
+function loadWx(){
+  var d=new Date();
+  var dh="<div>"+d.toLocaleDateString("hi-IN",{day:"numeric",month:"long",year:"numeric"})+"</div><div>"+d.toLocaleDateString("hi-IN",{weekday:"long"})+"</div>";
+  g("wx").innerHTML=dh;
+  getWx().then(function(c){if(!c)return;var w=c.w.current;
+    g("wx").innerHTML='<div class="t">'+IC(w.weather_code)+" "+Math.round(w.temperature_2m)+"°C</div><div>"+esc(c.place)+"</div>"+dh}).catch(function(){});
+}
+g("wx").onclick=function(e){
+  if(e.target.id==="ci")return;
+  g("wx").innerHTML='<input id="ci" class="mini" placeholder="शहर का नाम, Enter dabao" autocomplete="off">';
+  var i=g("ci");i.focus();
+  i.onkeydown=function(ev){if(ev.key!=="Enter")return;ev.preventDefault();var v=i.value.trim();if(!v)return;
+    localStorage.setItem("city",v);localStorage.removeItem("wxc");loadWx()};
+};
+draw();loadWx();
+</script></body></html>
+"""
+
+private val RESULTS_TPL = """
+<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>__CSS__
+.top{padding:12px 12px 0;position:sticky;top:0;background:#0b1020;z-index:2}
+.tabs{display:flex;gap:20px;padding:10px 4px 0;border-bottom:1px solid #ffffff22;overflow-x:auto}
+.tabs a{padding:8px 2px;color:#aab4d0;white-space:nowrap}
+.tabs a.on{color:#5aa2ff;border-bottom:3px solid #5aa2ff}
+.list{padding:4px 14px 50px}
+.r{margin:20px 0}
+.src{display:flex;gap:10px;align-items:center}
+.fv{width:28px;height:28px;border-radius:50%;background:#1d2b55;display:flex;align-items:center;justify-content:center;font-size:13px;color:#9fc4ff;flex:none}
+.h{font-size:14px}.u{font-size:12px;color:#8793b5;word-break:break-all}
+.t{display:block;font-size:19px;margin:5px 0 3px;color:#6fb0ff}
+.s{color:#c3cbe3;font-size:15px}
+.card{margin:14px;padding:14px;border-radius:16px;background:#101a33;border:1px solid #ffffff1a}
+.big{font-size:34px;margin:6px 0}
+.days{display:flex;justify-content:space-between;text-align:center;margin-top:12px;font-size:13px}
+</style></head><body>
+<div class="top"><form class="sb" action="https://home.local/s" method="get">
+<input name="q" value="__Q__" autocomplete="off">
+<button name="m" value="s">खोजें</button><button name="m" value="ai" class="g">AI</button></form>
+<div class="tabs"><a class="__TA__">All</a><a class="__TN__" href="https://home.local/s?m=s&t=news&q=__QU__">News</a><a class="__TV__" href="https://home.local/s?m=s&t=videos&q=__QU__">Videos</a><a href="https://www.openstreetmap.org/search?query=__QU__">Maps</a></div></div>
+<div id="card"></div>
+<div class="list">__LIST__</div>
+<script>
+var Q=__QJS__;
+__WXJS__
+if(/weather|mausam|temperature|मौसम|तापमान/i.test(Q)){
+  getWx().then(function(c){if(!c)return;var w=c.w.current,d=c.w.daily,days="";
+    for(var i=0;i<d.time.length;i++){var dt=new Date(d.time[i]+"T00:00:00");
+      days+="<div><div>"+dt.toLocaleDateString("hi-IN",{weekday:"short"})+"</div><div>"+IC(d.weather_code[i])+"</div><div>"+Math.round(d.temperature_2m_max[i])+"° "+Math.round(d.temperature_2m_min[i])+"°</div></div>"}
+    g("card").innerHTML='<div class="card"><h3 style="margin:0">'+esc(c.city)+' का मौसम</h3><small>'+esc(c.place)+'</small><div class="big">'+IC(w.weather_code)+" "+Math.round(w.temperature_2m)+'°C</div><div>आर्द्रता: '+w.relative_humidity_2m+'% | हवा: '+Math.round(w.wind_speed_10m)+' किमी/घंटा</div><div class="days">'+days+'</div></div>'}).catch(function(){});
+}
+</script></body></html>
+"""
+
+private fun msg(t: String) = "<meta name='viewport' content='width=device-width,initial-scale=1'><style>" +
+    BASE_CSS + "</style><p style='padding:18px'>" + t + "</p>"
 
 private val SEARCH_JS = """
 JSON.stringify(Array.from(document.querySelectorAll('.result')).slice(0,10).map(function(r){
   var a=r.querySelector('a.result__a');var s=r.querySelector('.result__snippet');
+  return a?{t:a.innerText,u:a.href,s:s?s.innerText:''}:null}).filter(Boolean))
+"""
+
+private val MOJEEK_JS = """
+JSON.stringify(Array.from(document.querySelectorAll('ul.results-standard li')).slice(0,10).map(function(r){
+  var a=r.querySelector('a.title')||r.querySelector('h2 a');var s=r.querySelector('p.s');
   return a?{t:a.innerText,u:a.href,s:s?s.innerText:''}:null}).filter(Boolean))
 """
 
@@ -278,7 +395,8 @@ class MainActivity : Activity() {
                 val u = request.url
                 if (u.host == "home.local" && u.path == "/s") {
                     val qq = u.getQueryParameter("q") ?: ""
-                    if (u.getQueryParameter("m") == "ai") ask(qq) else go(qq)
+                    val tb = u.getQueryParameter("t") ?: ""
+                    if (u.getQueryParameter("m") == "ai") ask(qq) else if (tb.isNotEmpty()) search(qq, tb) else go(qq)
                     return true
                 }
                 if (u.scheme == "http") {  // HTTPS-only
@@ -355,6 +473,10 @@ class MainActivity : Activity() {
         }
         val t = input.trim()
         if (t.isEmpty()) return
+        if (!(t.contains(".") && !t.contains(" "))) {
+            search(t)
+            return
+        }
         val url = if (t.contains(".") && !t.contains(" ")) {
             if (t.contains("://")) t else "https://$t"
         } else {
@@ -374,7 +496,7 @@ class MainActivity : Activity() {
         status.text = "Naya identity: cookies saaf, fingerprint badla"
     }
 
-    private fun showHome() = showHtml(HOME)
+    private fun showHome() = showHtml(HOME.replace("__CSS__", BASE_CSS).replace("__WXJS__", WX_JS))
 
     private fun showHtml(h: String) {
         web.loadDataWithBaseURL("https://home.local/", h, "text/html", "utf-8", null)
@@ -431,7 +553,7 @@ class MainActivity : Activity() {
         null
     }
 
-    private fun parseResults(raw: String?): List<Item> {
+    private fun parseResults(raw: String?, max: Int = 4): List<Item> {
         val out = ArrayList<Item>()
         try {
             val arr = JSONArray(decode(raw) ?: return out)
@@ -442,13 +564,61 @@ class MainActivity : Activity() {
                 if (h.contains("duckduckgo.com/y.js")) continue
                 val u = (Uri.parse(h).getQueryParameter("uddg") ?: h).replaceFirst("http://", "https://")
                 val host = Uri.parse(u).host ?: continue
-                if (!u.startsWith("https://") || host.contains("duckduckgo.com") || !seen.add(host)) continue
+                if (!u.startsWith("https://") || host.contains("duckduckgo.com") || (max <= 4 && !seen.add(host))) continue
                 out.add(Item(o.getString("t"), u, o.getString("s")))
-                if (out.size == 4) break
+                if (out.size >= max) break
             }
         } catch (e: Exception) {
         }
         return out
+    }
+
+    // Apna results page (SkyBrowser style): search engine ka page kabhi nahi dikhta
+    private fun search(q: String, tab: String = "") {
+        if (!ready) {
+            status.text = "Proxy ready nahi. Orbot/WARP chalu karo."
+            return
+        }
+        showHtml(msg("Search ho raha hai..."))
+        val qq = when (tab) {
+            "news" -> q + " news"
+            "videos" -> q + " site:youtube.com"
+            else -> q
+        }
+        val enc = URLEncoder.encode(qq, "UTF-8")
+        fetchJs("https://html.duckduckgo.com/html/?q=" + enc, SEARCH_JS) { raw ->
+            val a = parseResults(raw, 10)
+            if (a.isNotEmpty()) {
+                renderResults(q, a, tab)
+                return@fetchJs
+            }
+            fetchJs("https://www.mojeek.com/search?q=" + enc, MOJEEK_JS) { raw2 ->
+                val b = parseResults(raw2, 10)
+                if (b.isEmpty()) showHtml(msg("Kuch nahi mila. Thodi der baad try karo.")) else renderResults(q, b, tab)
+            }
+        }
+    }
+
+    private fun renderResults(q: String, items: List<Item>, tab: String) {
+        val list = items.joinToString("") {
+            val host = (Uri.parse(it.u).host ?: "").removePrefix("www.")
+            val disp = it.u.removePrefix("https://").trimEnd('/').replace("/", " \u203A ").take(70)
+            "<div class='r'><div class='src'><span class='fv'>" + TextUtils.htmlEncode(host.take(1).uppercase()) +
+                "</span><div><div class='h'>" + TextUtils.htmlEncode(host) + "</div><div class='u'>" +
+                TextUtils.htmlEncode(disp) + "</div></div></div><a class='t' href='" + TextUtils.htmlEncode(it.u) + "'>" +
+                TextUtils.htmlEncode(it.t) + "</a><div class='s'>" + TextUtils.htmlEncode(it.s) + "</div></div>"
+        }
+        val qu = TextUtils.htmlEncode(URLEncoder.encode(q, "UTF-8"))
+        showHtml(
+            RESULTS_TPL
+                .replace("__CSS__", BASE_CSS).replace("__WXJS__", WX_JS)
+                .replace("__QJS__", JSONObject.quote(q))
+                .replace("__QU__", qu).replace("__Q__", TextUtils.htmlEncode(q))
+                .replace("__TA__", if (tab == "") "on" else "")
+                .replace("__TN__", if (tab == "news") "on" else "")
+                .replace("__TV__", if (tab == "videos") "on" else "")
+                .replace("__LIST__", list)
+        )
     }
 
     // AI: search -> top pages padho -> free local summarizer
@@ -457,11 +627,11 @@ class MainActivity : Activity() {
             status.text = "Proxy ready nahi. Orbot/WARP chalu karo."
             return
         }
-        showHtml("<p style='font-family:sans-serif;padding:14px'>Search karke pages padh raha hu...</p>")
+        showHtml(msg("Search karke pages padh raha hu..."))
         fetchJs("https://html.duckduckgo.com/html/?q=" + URLEncoder.encode(q, "UTF-8"), SEARCH_JS) { raw ->
             val items = parseResults(raw)
             if (items.isEmpty()) {
-                showHtml("<p style='font-family:sans-serif;padding:14px'>Koi result nahi mila. Thodi der baad try karo.</p>")
+                showHtml(msg("Koi result nahi mila. Thodi der baad try karo."))
                 return@fetchJs
             }
             val docs = MutableList(items.size) { i -> sentences(items[i].s, 30) }
@@ -479,8 +649,8 @@ class MainActivity : Activity() {
 
     private fun renderAnswer(q: String, items: List<Item>, docs: List<List<String>>) {
         val pick = summarize(q, docs)
-        val head = "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
-            "<style>:root{color-scheme:light dark}body{font-family:sans-serif;padding:14px;line-height:1.55}a{color:#7b61ff}</style>"
+        val head = "<meta name='viewport' content='width=device-width,initial-scale=1'><style>" +
+            BASE_CSS + "</style><div style='padding:14px'>"
         if (pick.isEmpty()) {
             showHtml(head + "<p>Kaam ka text nahi mila. Sawal alag tarah se pucho.</p>")
             return
