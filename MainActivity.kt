@@ -8,7 +8,10 @@ import org.json.JSONObject
 import org.json.JSONTokener
 import android.app.Activity
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.Message
+import android.widget.FrameLayout
 import android.text.InputType
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
@@ -308,6 +311,8 @@ class MainActivity : Activity() {
     private lateinit var urlBar: EditText
     private lateinit var status: TextView
     private var scriptHandler: ScriptHandler? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private lateinit var hiddenHost: FrameLayout
     private var ready = false
     private val blocked = AtomicInteger(0)
 
@@ -354,6 +359,8 @@ class MainActivity : Activity() {
         root.addView(bar)
         root.addView(status)
         root.addView(web, LinearLayout.LayoutParams(MATCH_PARENT, 0, 1f))
+        hiddenHost = FrameLayout(this)
+        root.addView(hiddenHost, LinearLayout.LayoutParams(1, 1))
         setContentView(root)
 
         setupWebView()
@@ -523,11 +530,13 @@ class MainActivity : Activity() {
         st.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         st.cacheMode = WebSettings.LOAD_NO_CACHE
         CookieManager.getInstance().setAcceptThirdPartyCookies(w, false)
+        hiddenHost.addView(w, FrameLayout.LayoutParams(1, 1))
         var done = false
         val finish: (String?) -> Unit = { r ->
             if (!done) {
                 done = true
                 w.stopLoading()
+                hiddenHost.removeView(w)
                 w.destroy()
                 cb(r)
             }
@@ -538,12 +547,12 @@ class MainActivity : Activity() {
             ): WebResourceResponse? = blockResp(request.url.host)
 
             override fun onPageFinished(view: WebView, url: String) {
-                view.postDelayed({
+                handler.postDelayed({
                     if (!done) view.evaluateJavascript(js) { res -> finish(res) }
                 }, 900L)
             }
         }
-        w.postDelayed({ finish(null) }, 18000L)
+        handler.postDelayed({ finish(null) }, 15000L)
         w.loadUrl(url)
     }
 
@@ -594,7 +603,13 @@ class MainActivity : Activity() {
             }
             fetchJs("https://www.mojeek.com/search?q=" + enc, MOJEEK_JS) { raw2 ->
                 val b = parseResults(raw2, 10)
-                if (b.isEmpty()) showHtml(msg("Kuch nahi mila. Thodi der baad try karo.")) else renderResults(q, b, tab)
+                if (b.isEmpty()) {
+                    val d1 = if (decode(raw) == null) "timeout ya block" else "0 result"
+                    val d2 = if (decode(raw2) == null) "timeout ya block" else "0 result"
+                    showHtml(msg("Kuch nahi mila. (DuckDuckGo: " + d1 + ", Mojeek: " + d2 + "). VPN (WARP) ON hai? Dobara try karo."))
+                } else {
+                    renderResults(q, b, tab)
+                }
             }
         }
     }
