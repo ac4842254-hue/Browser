@@ -1,6 +1,10 @@
 package com.priv.browser
 
 import android.annotation.SuppressLint
+import android.net.Uri
+import android.text.TextUtils
+import org.json.JSONArray
+import org.json.JSONTokener
 import android.app.Activity
 import android.os.Bundle
 import android.os.Message
@@ -111,6 +115,69 @@ private val FP_JS = """
 })();
 """
 
+private val HOME = """
+<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{color-scheme:light dark}
+body{font-family:system-ui,sans-serif;margin:0;padding:28px 18px;text-align:center}
+h1{font-size:30px;margin:34px 0 6px}p{opacity:.7;margin:0 0 24px}
+input{width:100%;padding:14px;font-size:17px;border-radius:12px;border:1px solid #8886;box-sizing:border-box}
+button{margin:14px 5px 0;padding:12px 22px;font-size:16px;border:0;border-radius:12px;background:#5b3df5;color:#fff}
+</style></head><body>
+<h1>PrivBrowser</h1><p>Private &middot; Tracker-free &middot; AI search</p>
+<form action="https://home.local/s" method="get">
+<input name="q" placeholder="Search ya sawal likho" autocomplete="off">
+<button type="submit" name="m" value="s">Search</button>
+<button type="submit" name="m" value="ai">Ask AI</button>
+</form></body></html>
+"""
+
+private val SEARCH_JS = """
+JSON.stringify(Array.from(document.querySelectorAll('.result')).slice(0,10).map(function(r){
+  var a=r.querySelector('a.result__a');var s=r.querySelector('.result__snippet');
+  return a?{t:a.innerText,u:a.href,s:s?s.innerText:''}:null}).filter(Boolean))
+"""
+
+private val PAGE_JS = """
+(function(){var n=document.querySelector('article')||document.querySelector('main')||document.body;
+return (n.innerText||'').slice(0,30000)})()
+"""
+
+private val STOP = ("the a an is are was of to in on and or for with what who how why " +
+    "kya hai hain ka ki ke ko se me mein kaun kaise kyu kab").split(" ").toSet()
+
+private data class Item(val t: String, val u: String, val s: String)
+
+private fun toks(s: String): List<String> =
+    Regex("[\\p{L}\\p{N}]+").findAll(s.lowercase()).map { it.value }.filter { it.length > 2 && it !in STOP }.toList()
+
+private fun sentences(t: String, lo: Int = 40): List<String> =
+    t.replace(Regex("\\s+"), " ").split(Regex("(?<=[.!?\u0964])\\s+")).map { it.trim() }.filter { it.length in lo..320 }
+
+private class Cand(val s: String, val di: Int, val pos: Int, val score: Double, val t: Set<String>)
+
+private fun summarize(q: String, docs: List<List<String>>, k: Int = 5): List<Pair<String, Int>> {
+    val qs = toks(q).toSet()
+    val cands = ArrayList<Cand>()
+    docs.forEachIndexed { di, ss ->
+        ss.forEachIndexed { pos, s ->
+            val t = toks(s).toSet()
+            val ov = t.count { it in qs }
+            if (qs.isNotEmpty() && ov == 0) return@forEachIndexed
+            cands.add(Cand(s, di, pos, 3.0 * ov / maxOf(qs.size, 1) + 1.0 / (1 + pos / 8.0) - 0.15 * di, t))
+        }
+    }
+    cands.sortByDescending { it.score }
+    val chosen = ArrayList<Cand>()
+    for (c in cands) {
+        if (chosen.any { it.t.intersect(c.t).size.toDouble() / maxOf(it.t.union(c.t).size, 1) > 0.6 }) continue
+        chosen.add(c)
+        if (chosen.size >= k) break
+    }
+    chosen.sortWith(compareBy({ it.di }, { it.pos }))
+    return chosen.map { it.s to it.di }
+}
+
 private fun isTracker(host: String): Boolean {
     val parts = host.lowercase().split(".")
     for (i in parts.indices) {
@@ -152,6 +219,13 @@ class MainActivity : Activity() {
         bar.addView(Button(this).apply {
             text = "NEW ID"
             setOnClickListener { newIdentity() }
+        })
+        bar.addView(Button(this).apply {
+            text = "AI"
+            setOnClickListener {
+                val t = urlBar.text.toString().trim()
+                if (t.isNotEmpty()) ask(t)
+            }
         })
 
         status = TextView(this).apply {
@@ -202,6 +276,11 @@ class MainActivity : Activity() {
 
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val u = request.url
+                if (u.host == "home.local" && u.path == "/s") {
+                    val qq = u.getQueryParameter("q") ?: ""
+                    if (u.getQueryParameter("m") == "ai") ask(qq) else go(qq)
+                    return true
+                }
                 if (u.scheme == "http") {  // HTTPS-only
                     view.loadUrl(u.buildUpon().scheme("https").build().toString())
                     return true
@@ -210,7 +289,7 @@ class MainActivity : Activity() {
             }
 
             override fun onPageFinished(view: WebView, url: String) {
-                urlBar.setText(url)
+                urlBar.setText(if (url.contains("home.local")) "" else url)
                 updateStatus()
             }
         }
@@ -241,7 +320,7 @@ class MainActivity : Activity() {
         if (PROXY.isBlank()) {
             ready = true
             updateStatus()
-            go("https://duckduckgo.com")
+            showHome()
             return
         }
         // Fail-closed: proxy set na ho paye to browsing hi band (real IP leak nahi hoga)
@@ -256,7 +335,7 @@ class MainActivity : Activity() {
                 Runnable {
                     ready = true
                     updateStatus()
-                    go("https://check.torproject.org")
+                    showHome()
                 }
             )
         } catch (e: Exception) {
@@ -291,8 +370,128 @@ class MainActivity : Activity() {
         web.clearHistory()
         web.clearFormData()
         installScript()
-        web.reload()
+        showHome()
         status.text = "Naya identity: cookies saaf, fingerprint badla"
+    }
+
+    private fun showHome() = showHtml(HOME)
+
+    private fun showHtml(h: String) {
+        web.loadDataWithBaseURL("https://home.local/", h, "text/html", "utf-8", null)
+    }
+
+    private fun blockResp(host: String?): WebResourceResponse? {
+        if (host != null && isTracker(host)) {
+            blocked.incrementAndGet()
+            return WebResourceResponse("text/plain", "utf-8", ByteArrayInputStream(ByteArray(0)))
+        }
+        return null
+    }
+
+    // Hidden WebView: page kholo, JS chalao, result do (wahi proxy/VPN jo browser use karta hai)
+    @SuppressLint("SetJavaScriptEnabled")
+    private fun fetchJs(url: String, js: String, cb: (String?) -> Unit) {
+        val w = WebView(this)
+        val st = w.settings
+        st.javaScriptEnabled = true
+        st.userAgentString = UA
+        st.allowFileAccess = false
+        st.allowContentAccess = false
+        st.setGeolocationEnabled(false)
+        st.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        st.cacheMode = WebSettings.LOAD_NO_CACHE
+        CookieManager.getInstance().setAcceptThirdPartyCookies(w, false)
+        var done = false
+        val finish: (String?) -> Unit = { r ->
+            if (!done) {
+                done = true
+                w.stopLoading()
+                w.destroy()
+                cb(r)
+            }
+        }
+        w.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView, request: WebResourceRequest
+            ): WebResourceResponse? = blockResp(request.url.host)
+
+            override fun onPageFinished(view: WebView, url: String) {
+                view.postDelayed({
+                    if (!done) view.evaluateJavascript(js) { res -> finish(res) }
+                }, 900L)
+            }
+        }
+        w.postDelayed({ finish(null) }, 18000L)
+        w.loadUrl(url)
+    }
+
+    private fun decode(raw: String?): String? = try {
+        if (raw == null || raw == "null") null else JSONTokener(raw).nextValue() as? String
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun parseResults(raw: String?): List<Item> {
+        val out = ArrayList<Item>()
+        try {
+            val arr = JSONArray(decode(raw) ?: return out)
+            val seen = HashSet<String>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val h = o.getString("u")
+                if (h.contains("duckduckgo.com/y.js")) continue
+                val u = (Uri.parse(h).getQueryParameter("uddg") ?: h).replaceFirst("http://", "https://")
+                val host = Uri.parse(u).host ?: continue
+                if (!u.startsWith("https://") || host.contains("duckduckgo.com") || !seen.add(host)) continue
+                out.add(Item(o.getString("t"), u, o.getString("s")))
+                if (out.size == 4) break
+            }
+        } catch (e: Exception) {
+        }
+        return out
+    }
+
+    // AI: search -> top pages padho -> free local summarizer
+    private fun ask(q: String) {
+        if (!ready) {
+            status.text = "Proxy ready nahi. Orbot/WARP chalu karo."
+            return
+        }
+        showHtml("<p style='font-family:sans-serif;padding:14px'>Search karke pages padh raha hu...</p>")
+        fetchJs("https://html.duckduckgo.com/html/?q=" + URLEncoder.encode(q, "UTF-8"), SEARCH_JS) { raw ->
+            val items = parseResults(raw)
+            if (items.isEmpty()) {
+                showHtml("<p style='font-family:sans-serif;padding:14px'>Koi result nahi mila. Thodi der baad try karo.</p>")
+                return@fetchJs
+            }
+            val docs = MutableList(items.size) { i -> sentences(items[i].s, 30) }
+            var left = items.size
+            items.forEachIndexed { i, item ->
+                fetchJs(item.u, PAGE_JS) { txt ->
+                    val t = decode(txt)
+                    if (t != null) docs[i] = docs[i] + sentences(t)
+                    left--
+                    if (left == 0) renderAnswer(q, items, docs)
+                }
+            }
+        }
+    }
+
+    private fun renderAnswer(q: String, items: List<Item>, docs: List<List<String>>) {
+        val pick = summarize(q, docs)
+        val head = "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
+            "<style>:root{color-scheme:light dark}body{font-family:sans-serif;padding:14px;line-height:1.55}a{color:#7b61ff}</style>"
+        if (pick.isEmpty()) {
+            showHtml(head + "<p>Kaam ka text nahi mila. Sawal alag tarah se pucho.</p>")
+            return
+        }
+        val body = pick.joinToString("") {
+            "<li>" + TextUtils.htmlEncode(it.first) + " <sup>[" + (it.second + 1) + "]</sup></li>"
+        }
+        val src = items.joinToString("") {
+            "<li><a href='" + TextUtils.htmlEncode(it.u) + "'>" + TextUtils.htmlEncode(it.t) + "</a></li>"
+        }
+        showHtml(head + "<h3>" + TextUtils.htmlEncode(q) + "</h3><ul>" + body + "</ul><b>Sources</b><ol>" + src + "</ol>")
     }
 
     @Deprecated("Deprecated in Java")
